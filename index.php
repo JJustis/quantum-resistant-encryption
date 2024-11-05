@@ -35,6 +35,12 @@
     </div>
 
     <div class="container">
+	
+    <h2>Upload Keys for Decryption</h2>
+    <input type="file" id="keysFileInput" class="file-input" accept=".json">
+    <div id="keysFileStatus"></div>
+
+
         <h2>Decryption</h2>
         <div>
             <input type="file" id="lockFileInput" class="file-input" accept=".lock">
@@ -51,7 +57,6 @@
 
     <script>
         // Define the App namespace and attach it to window
-		i = 0;
         window.App = {
             state: {
                 currentKeys: null,
@@ -177,145 +182,157 @@
                 }
             },
 
-            generateAndShowKeys: function() {
-                try {
-                    const lweKeys = window.App.crypto.generateLWEKeys();
-                    const dsaKeys = window.App.crypto.generateDSAKeys();
-                    const hmacKey = CryptoJS.lib.WordArray.random(32);
-                    
-                    window.App.state.currentKeys = {
-                        lwe: lweKeys,
-                        dsa: dsaKeys,
-                        hmac: hmacKey
-                    };
-                    
-                    window.App.state.currentLockFile = window.App.crypto.createLockFile(
-                        dsaKeys.publicKey,
-                        hmacKey
-                    );
-                    
-                    window.App.utils.showStatus('keyOutput',
-                        'Keys generated successfully!\n' +
-                        `HMAC Key: ${hmacKey.toString()}\n` +
-                        `Lock File ID: ${window.App.state.currentLockFile.fileId}`
-                    );
-                    
-                    document.getElementById('downloadLockFile').disabled = false;
-                } catch (error) {
-                    window.App.utils.showStatus('keyOutput', error.message, true);
-                }
-            },
+generateAndShowKeys: function() {
+    try {
+        const lweKeys = window.App.crypto.generateLWEKeys();
+        const dsaKeys = window.App.crypto.generateDSAKeys();
+        const hmacKey = CryptoJS.lib.WordArray.random(32);
+        
+        window.App.state.currentKeys = {
+            lwe: lweKeys,
+            dsa: dsaKeys,
+            hmac: hmacKey
+        };
+        
+        window.App.state.currentLockFile = window.App.crypto.createLockFile(
+            dsaKeys.publicKey,
+            hmacKey
+        );
+        
+        // Create a keys object for download
+        const keysForDownload = {
+            lwe: lweKeys,
+            dsa: dsaKeys,
+            hmac: hmacKey.toString()
+        };
 
-            downloadFile: function(content, filename) {
-                const blob = new Blob([content], { type: 'application/json' });
+        // Enable the download keys button
+        const keysBlob = new Blob([JSON.stringify(keysForDownload)], { type: 'application/json' });
+        const url = URL.createObjectURL(keysBlob);
+
+        const downloadLink = document.createElement('a');
+        downloadLink.href = url;
+        downloadLink.download = 'keys.json';
+        downloadLink.click();
+        URL.revokeObjectURL(url);
+
+        // Update status on UI
+        window.App.utils.showStatus('keyOutput', 'Keys generated and downloaded successfully!');
+        document.getElementById('downloadLockFile').disabled = false;
+    } catch (error) {
+        console.error(error);
+        window.App.utils.showStatus('keyOutput', 'Error generating keys: ' + error.message, true);
+    }
+},
+
+
+
+
+            downloadLockFile: function() {
+                const lockFileData = JSON.stringify(window.App.state.currentLockFile);
+                const blob = new Blob([lockFileData], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'lockfile.lock';
+                a.click();
                 URL.revokeObjectURL(url);
             },
 
-            downloadLockFile: function() {
-                try {
-                    if (!window.App.state.currentLockFile) {
-                        throw new Error('No lock file available');
-                    }
-                    window.App.downloadFile(
-                        JSON.stringify(window.App.state.currentLockFile, null, 2),
-                        'encryption.lock'
-                    );
-                } catch (error) {
-                    window.App.utils.showStatus('keyOutput', error.message, true);
-                }
-            },
+encryptMessage: function() {
+    const plaintext = document.getElementById('plaintext').value;
+    const keys = window.App.state.currentKeys;
+    
+    if (!keys) {
+        window.App.utils.showStatus('encryptionOutput', 'No keys generated yet!', true);
+        return;
+    }
+
+    // Verify lock file exists and has a fileId
+    const lockFileId = window.App.state.currentLockFile?.fileId;
+    if (!lockFileId) {
+        window.App.utils.showStatus('encryptionOutput', 'No lock file generated!', true);
+        return;
+    }
+
+    // Encrypt the plaintext using the HMAC key
+    const encrypted = CryptoJS.AES.encrypt(plaintext, keys.hmac.toString()).toString();
+
+    // Create encrypted data object
+    const encryptedData = {
+        ciphertext: encrypted,
+        hmac: CryptoJS.HmacSHA256(encrypted, keys.hmac.toString()).toString(),
+        lockFileId: lockFileId // Use current lock file's ID
+    };
+
+    // Store encrypted data as JSON
+    window.App.state.currentEncryptedData = JSON.stringify(encryptedData);
+
+    window.App.utils.showStatus('encryptionOutput', 'Message encrypted successfully!');
+    document.getElementById('downloadEncrypted').disabled = false;
+},
+
+
 
             downloadEncryptedData: function() {
-                try {
-                    if (!window.App.state.currentEncryptedData) {
-                        throw new Error('No encrypted data available');
-                    }
-                    window.App.downloadFile(
-                        JSON.stringify(window.App.state.currentEncryptedData, null, 2),
-                        'encrypted_data.enc'
-                    );
-                } catch (error) {
-                    window.App.utils.showStatus('encryptionOutput', error.message, true);
-                }
+                const blob = new Blob([window.App.state.currentEncryptedData], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'encrypted.enc';
+                a.click();
+                URL.revokeObjectURL(url);
             },
 
-            encryptMessage: function() {
-                try {
-                    if (!window.App.state.currentKeys) {
-                        throw new Error('Please generate keys first');
-                    }
-                    
-                    const plaintextElement = document.getElementById('plaintext');
-                    const plaintext = plaintextElement.value.trim();
-                    if (!plaintext) {
-                        throw new Error('Please enter a message to encrypt');
-                    }
-                    
-                    const sessionKey = CryptoJS.lib.WordArray.random(32);
-                    const ciphertext = CryptoJS.AES.encrypt(plaintext, sessionKey).toString();
-                    const hmac = CryptoJS.HmacSHA256(ciphertext, sessionKey).toString();
-                    
-                    window.App.state.currentEncryptedData = {
-                        ciphertext,
-                        hmac,
-                        lockFileId: window.App.state.currentLockFile.fileId
-                    };
-                    
-                    window.App.utils.showStatus('encryptionOutput', 
-                        'Encryption successful! Click "Download Encrypted Data" to save.'
-                    );
-                    document.getElementById('downloadEncrypted').disabled = false;
-                } catch (error) {
-                    window.App.utils.showStatus('encryptionOutput', error.message, true);
-                }
-            },
+            
+          decryptMessage: function() {
+    try {
+        if (!window.App.state.uploadedLockFile || !window.App.state.uploadedEncryptedData) {
+            throw new Error("Please upload both lock file and encrypted data");
+        }
 
-            decryptMessage: function() {
-                try {
-                    if (!window.App.state.uploadedLockFile || !window.App.state.uploadedEncryptedData) {
-                        throw new Error("Please upload both lock file and encrypted data");
-                    }
+        if (!window.App.state.currentKeys?.hmac) {
+            throw new Error("Encryption keys not available");
+        }
 
-                    if (!window.App.state.currentKeys?.hmac) {
-                        throw new Error("Encryption keys not available");
-                    }
+        // Ensure lock file ID matches encrypted data ID
+        if (window.App.state.uploadedEncryptedData.lockFileId !== window.App.state.uploadedLockFile.fileId) {
+            throw new Error("Lock file ID does not match encrypted data");
+        }
 
-                    if (window.App.state.uploadedEncryptedData.lockFileId !== window.App.state.uploadedLockFile.fileId) {
-                        throw new Error("Lock file ID does not match encrypted data");
-                    }
+        // Validate HMAC
+        const hmacValid = CryptoJS.HmacSHA256(
+            window.App.state.uploadedEncryptedData.ciphertext,
+            window.App.state.currentKeys.hmac.toString()
+        ).toString() === window.App.state.uploadedEncryptedData.hmac;
 
-                    const hmacValid = CryptoJS.HmacSHA256(
-                        window.App.state.uploadedEncryptedData.ciphertext,
-                        window.App.state.currentKeys.hmac
-                    ).toString() === window.App.state.uploadedEncryptedData.hmac;
+        if (!hmacValid) {
+            throw new Error("Invalid HMAC - data may have been tampered with");
+        }
 
-                    if (!hmacValid) {
-                        throw new Error("Invalid HMAC - data may have been tampered with");
-                    }
+        // Decrypt the message
+        const decrypted = CryptoJS.AES.decrypt(
+            window.App.state.uploadedEncryptedData.ciphertext,
+            window.App.state.currentKeys.hmac.toString()
+        ).toString(CryptoJS.enc.Utf8);
 
-                    const decrypted = CryptoJS.AES.decrypt(
-                        window.App.state.uploadedEncryptedData.ciphertext,
-                        window.App.state.currentKeys.hmac
-                    ).toString(CryptoJS.enc.Utf8);
+        if (!decrypted) {
+            throw new Error("Decryption failed");
+        }
 
-                    if (!decrypted) {
-                        throw new Error("Decryption failed");
-                    }
+        window.App.utils.showStatus('decryptionStatus', 'Decryption successful!');
+        document.getElementById('decryptionOutput').textContent = decrypted;
+    } catch (error) {
+        window.App.utils.showStatus('decryptionStatus', error.message, true);
+        document.getElementById('decryptionOutput').textContent = '';
+    }
+},
 
-                    window.App.utils.showStatus('decryptionStatus', 'Decryption successful!');
-                    document.getElementById('decryptionOutput').textContent = decrypted;
-                } catch (error) {
-                    window.App.utils.showStatus('decryptionStatus', error.message, true);
-                    document.getElementById('decryptionOutput').textContent = '';
-                }
-            },
+
+
+
 
             updateDecryptButton: function() {
                 const decryptButton = document.getElementById('decryptButton');
@@ -324,23 +341,56 @@
                 }
             }
         };
+// Unique ID generation function
+function generateUniqueId() {
+    return Math.random().toString(36).substr(2, 9); // Simple random string generator
+}
 
         // Add event listeners after App is defined
         document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('lockFileInput').addEventListener('change', async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
+document.getElementById('lockFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-                try {
-                    window.App.state.uploadedLockFile = await window.App.utils.readFileAsJson(file);
-                    window.App.utils.showStatus('lockFileStatus', 'Lock file loaded successfully');
-                    window.App.updateDecryptButton();
-                } catch (error) {
-                    window.App.utils.showStatus('lockFileStatus', error.message, true);
-                    window.App.state.uploadedLockFile = null;
-                    window.App.updateDecryptButton();
-                }
-            });
+    try {
+        const lockFileContent = await window.App.utils.readFileAsJson(file);
+        
+        // Ensure the lock file contains a fileId
+        if (!lockFileContent.fileId) {
+            throw new Error("Uploaded lock file does not have a fileId.");
+        }
+        
+        window.App.state.uploadedLockFile = lockFileContent;
+        window.App.utils.showStatus('lockFileStatus', 'Lock file loaded successfully');
+        window.App.updateDecryptButton();
+    } catch (error) {
+        window.App.utils.showStatus('lockFileStatus', error.message, true);
+        window.App.state.uploadedLockFile = null;
+        window.App.updateDecryptButton();
+    }
+});
+
+document.getElementById('keysFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+        const keysContent = await window.App.utils.readFileAsJson(file);
+        
+        // Reconstruct the keys object from uploaded JSON
+        window.App.state.currentKeys = {
+            lwe: keysContent.lwe,
+            dsa: keysContent.dsa,
+            hmac: CryptoJS.enc.Hex.parse(keysContent.hmac) // Parse HMAC key back to WordArray
+        };
+        
+        window.App.utils.showStatus('keysFileStatus', 'Keys file loaded successfully for decryption');
+    } catch (error) {
+        window.App.utils.showStatus('keysFileStatus', error.message, true);
+    }
+});
+
+
 
             document.getElementById('encryptedFileInput').addEventListener('change', async (e) => {
                 const file = e.target.files?.[0];
